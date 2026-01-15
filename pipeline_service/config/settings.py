@@ -52,10 +52,6 @@ class Settings(BaseSettings):
     padding_percentage: float = Field(default=0.2, env="PADDING_PERCENTAGE")
     limit_padding: bool = Field(default=True, env="LIMIT_PADDING")
     
-    vllm_url: str = "http://localhost:8095/v1"
-    vllm_api_key: str = "local"
-    vllm_model_name: str = "THUDM/GLM-4.1V-9B-Thinking"
-    
     # Maximum number of shape candidates to generate in Stage 1
     max_candidates: int = Field(default=3, env="MAX_CANDIDATES")
     
@@ -68,9 +64,6 @@ class Settings(BaseSettings):
         (10000, 1),    # 40k-50k voxels → 1 candidate
         # Above 50k → 1 candidate (uses last value)
     ], env="CANDIDATE_RANGES")
-    
-    # Timeout for generation + judging (seconds)
-    generation_timeout: int = Field(default=25, env="GENERATION_TIMEOUT")
 
     class Config:
         env_file = ".env"

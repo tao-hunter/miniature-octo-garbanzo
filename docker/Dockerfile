@@ -5,12 +5,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV TORCH_CUDA_ARCH_LIST="8.6;8.0;8.9;9.0;12.0"
 
-# --- ENV CHO VLLM ---
-ENV VLLM_GPU_MEMORY_UTILIZATION=0.275
-ENV VLLM_PORT=8095
-ENV VLLM_MODEL="THUDM/GLM-4.1V-9B-Thinking"
-ENV VLLM_API_KEY="local"
-
 # --- 1. SYSTEM DEPENDENCIES ---
 # Gộp các lệnh apt để giảm layer và cache tốt hơn
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -93,21 +87,7 @@ RUN wget https://github.com/404-Repo/spz/releases/download/v.0.1.2/pyspz-wheels-
 # Install ben2 (System Python)
 RUN pip install -e "git+https://github.com/PramaLLC/BEN2.git#egg=ben2"
 
-# --- 3. VLLM ENVIRONMENT (ISOLATED) ---
-# Tạo môi trường ảo tại /opt/vllm-env
-RUN python3.11 -m venv /opt/vllm-env
-
-# Cài đặt PyTorch trước (cùng version với base image)
-# Điều này đảm bảo vLLM sử dụng PyTorch version tương thích
-RUN /opt/vllm-env/bin/pip install --upgrade pip
-RUN /opt/vllm-env/bin/pip install hf_transfer
-
-# Cài đặt vLLM và OpenAI vào trong VENV
-# QUAN TRỌNG: Set TORCH_CUDA_ARCH_LIST để đảm bảo nếu vLLM compile gì đó, nó sẽ include 9.0 (H200)
-# Sử dụng latest vLLM version để có support tốt hơn cho H200
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;12.0" /opt/vllm-env/bin/pip install vllm==0.10.2 --extra-index-url https://download.pytorch.org/whl/cu128  openai==2.9.0
-
-# --- 4. SETUP WORKSPACE ---
+# --- 3. SETUP WORKSPACE ---
 WORKDIR /workspace
 
 # Copy toàn bộ project
@@ -118,6 +98,6 @@ COPY pipeline_service /workspace
 #COPY start.sh /workspace/start.sh
 RUN chmod +x /workspace/start.sh
 
-EXPOSE 10006 8095
+EXPOSE 10006
 
 CMD ["./start.sh"]

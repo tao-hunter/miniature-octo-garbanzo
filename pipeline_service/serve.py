@@ -9,26 +9,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import pyspz
-from plyfile import PlyData
-import torch
 
 from config import settings
 from logger_config import logger
 from schemas import GenerateRequest, GenerateResponse, TrellisRequest, TrellisParams
 from modules import GenerationPipeline
-from modules.duel_manager import DuelManager
 from modules.utils import secure_randint, set_random_seed
 from PIL import Image
 import io
 
-duel_manager = DuelManager(settings)
 pipeline = GenerationPipeline(settings)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await pipeline.startup()
-    # warm up pipeline and vllm
+    # warm up pipeline
     temp_image = Image.new("RGB", (64, 64), color=(128, 128, 128))
     buffer = io.BytesIO()
     temp_image.save(buffer, format="PNG")
@@ -57,24 +53,19 @@ app.add_middleware(
 
 async def run_champion_generation(
     image_bytes: bytes, seed: int
-) -> tuple[bytes, int, str]:
+) -> tuple[bytes, int]:
     """
     BATCHED MULTIDIFFUSION WITH AUTOMATIC VARIETY:
-    1. Batch generate N candidates with multidiffusion mode (30-40% faster!)
-    2. VLLM judges all candidates and picks the best
+    1. Batch generate N candidates with multidiffusion mode
+    2. Select the first generated candidate
     
     Important: Even with SAME seed, batching produces DIFFERENT models because:
-    - torch.randn(num_samples, ...) generates different noise per sample
+    - Random noise is generated per sample in the batch
     - Each sample gets sequential values from the RNG stream
     - Result: Natural variety without sacrificing speed!
-    
-    TIMEOUT: If judging takes > 25s, returns the current best candidate.
     """
-    import asyncio
     import time
     
-    final_ply_bytes = None
-
     if seed < 0:
         seed = secure_randint(0, 10000)
     set_random_seed(seed)
@@ -137,54 +128,10 @@ async def run_champion_generation(
     )
     
     generation_time = time.time() - generation_start
-
-    # OPTIMIZATION: Render all texture candidates ONCE upfront
-    ply_files = [candidate.ply_file for candidate in candidates]
-    rendered_images = await duel_manager.batch_render_candidates(ply_files)
-    
-    # Check if generation already took too long
-    elapsed = time.time() - generation_start
-    if elapsed > settings.generation_timeout:
-        logger.warning(f"⏱️ Generation took {elapsed:.2f}s > {settings.generation_timeout}s timeout. Returning first candidate without judging.")
-        return candidates[0].ply_file, seed
-    
-    # VLLM judges all candidates and selects the best with timeout
-    logger.info(f"⚔️ VLLM judging {num_texture_candidates} texture candidates...")
-    
-    best_idx = 0
-    
-    async def judge_candidates():
-        nonlocal best_idx
-        # Judge each candidate against the current best using PRE-RENDERED images
-        for i in range(1, num_texture_candidates):
-            logger.info(f"   -> Judging candidate {i+1} vs candidate {best_idx+1}...")
-            
-            # Compare using pre-rendered images (no re-rendering!)
-            winner_idx, issues = await duel_manager.run_duel_prerendered(
-                image_bytes,
-                rendered_images[best_idx],  # Baseline rendered image
-                rendered_images[i]           # Current candidate rendered image
-            )
-            
-            if winner_idx == 1:  # Current candidate won
-                logger.info(f"   Candidate {i+1}: BETTER than candidate {best_idx+1}")
-                best_idx = i
-            else:
-                logger.info(f"   Candidate {i+1}: Worse than candidate {best_idx+1}")
-    
-    # Run judging with timeout
-    remaining_time = max(1, settings.generation_timeout - elapsed)  # At least 1 second
-    try:
-        await asyncio.wait_for(judge_candidates(), timeout=remaining_time)
-    except asyncio.TimeoutError:
-        logger.warning(f"⏱️ Judging timeout after {remaining_time:.2f}s. Returning current best: Candidate {best_idx+1}")
-    
-    final_ply_bytes = candidates[best_idx].ply_file
-    selected_seed = seed
-    total_time = time.time() - generation_start
-    logger.success(f"🏆 CHAMPION: Candidate {best_idx+1} (total time: {total_time:.2f}s)")
-
-    return final_ply_bytes, selected_seed
+    logger.info(
+        f"✅ Generated {len(candidates)} candidate(s) in {generation_time:.2f}s. Returning the first candidate."
+    )
+    return candidates[0].ply_file, seed
 
 
 # ---------------------------------------------------------
